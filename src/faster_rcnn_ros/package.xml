@@ -1,0 +1,19 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>faster_rcnn_ros</name>
+  <version>0.0.1</version>
+  <description>Faster R-CNN with TensorRT 8.5 in ROS 2 Foxy</description>
+  <maintainer email="you@example.com">Your Name</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>libopencv-dev</depend> <!-- Foxy 中这样写 -->
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

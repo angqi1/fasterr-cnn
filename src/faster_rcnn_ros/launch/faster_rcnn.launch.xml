@@ -1,0 +1,19 @@
+<launch>
+    <arg name="engine_path" default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn.engine"/>
+    <arg name="labels_path" default="$(find-pkg-share faster_rcnn_ros)/models/labels.txt"/>
+    <arg name="input_topic" default="/camera/image_raw"/>
+    <arg name="overlay_topic" default="/detectnet/overlay"/>
+    <arg name="threshold" default="0.5"/>
+    <arg name="input_height" default="480"/>
+    <arg name="input_width" default="640"/>
+
+    <node pkg="faster_rcnn_ros" exec="faster_rcnn_node" output="screen">
+        <param name="engine_path" value="$(var engine_path)"/>
+        <param name="labels_path" value="$(var labels_path)"/>
+        <param name="input_topic" value="$(var input_topic)"/>
+        <param name="overlay_topic" value="$(var overlay_topic)"/>
+        <param name="threshold" value="$(var threshold)"/>
+        <param name="input_height" value="$(var input_height)"/>
+        <param name="input_width" value="$(var input_width)"/>
+    </node>
+</launch>

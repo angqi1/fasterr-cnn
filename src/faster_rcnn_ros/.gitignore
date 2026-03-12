@@ -1,0 +1,31 @@
+# Build files
+build/
+install/
+log/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Model files (large binary files)
+*.engine
+*.onnx
+*.trt
+*.weights
+*.pth
+*.pt
+
+# Temporary files
+*.log
+*.tmp

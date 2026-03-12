@@ -1,0 +1,27 @@
+# ROS2 build artifacts
+build/
+install/
+log/
+
+# TensorRT engines (large binaries, device-specific)
+*.engine
+
+# ONNX model files (large, tracked separately)
+*.onnx
+
+# Python virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Temporary files
+/tmp/
+*.log
+*.bak
+
+# Editor
+.vscode/
+*.swp
