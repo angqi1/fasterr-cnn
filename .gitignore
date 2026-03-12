@@ -25,3 +25,11 @@ __pycache__/
 # Editor
 .vscode/
 *.swp
+
+# 视频文件
+*.mp4
+*.avi
+*.mov
+
+# 推理测试图片结果
+test_images/results/
