@@ -102,11 +102,10 @@ void FasterRCNNDetector::loadEngine(const std::string& engine_path) {
 }
 
 // ─────────────────────────── Inference ──────────────────────────────────────
-std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float threshold) {
-    // ── 1. 预处理：resize + BGR→RGB + /255.0 + CHW 排列 ──────────────────
-    //    cv::dnn::blobFromImage 输出连续内存 (1, 3, H, W) float，即 CHW
-    cv::Mat blob;
-    cv::dnn::blobFromImage(image, blob,
+
+// ── inferAsync: 预处理 + H2D + enqueueV3，不等待 GPU 完成 ─────────────────
+void FasterRCNNDetector::inferAsync(const cv::Mat& image) {
+    cv::dnn::blobFromImage(image, blob_,
                            1.0 / 255.0,
                            cv::Size(input_w_, input_h_),
                            cv::Scalar(),
@@ -114,20 +113,21 @@ std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float thr
                            /*crop=*/false,
                            CV_32F);
 
-    // ── 2. 上传输入到 GPU ─────────────────────────────────────────────────
     const size_t input_bytes = 3 * input_h_ * input_w_ * sizeof(float);
-    CHECK_CUDA(cudaMemcpyAsync(d_input_, blob.data, input_bytes,
+    CHECK_CUDA(cudaMemcpyAsync(d_input_, blob_.data, input_bytes,
                                cudaMemcpyHostToDevice, stream_));
 
-    // ── 3. TRT 8.5 enqueueV3（替代旧的 executeV2/enqueueV2）────────────────
-    //    DDS 输出：scores(-1,) labels(-1,) boxes(-1,4)
-    //    引擎会回调 OutputAllocator::reallocateOutput / notifyShape
     if (!context_->enqueueV3(stream_)) {
         throw std::runtime_error("TensorRT enqueueV3 failed");
     }
+    // ⚠️ 不 cudaStreamSynchronize：让调用方统一控制同步时机，实现并行
+}
+
+// ── syncAndCollect: 等待 GPU 完成，D2H 拷贝，后处理 ───────────────────────
+std::vector<Detection> FasterRCNNDetector::syncAndCollect(const cv::Mat& image, float threshold) {
     CHECK_CUDA(cudaStreamSynchronize(stream_));
 
-    // ── 4. 读取动态输出维度 ───────────────────────────────────────────────
+    // ── 读取动态输出维度 ─────────────────────────────────────────────────
     int n_dets = 0;
     if (scores_alloc_->outputDims.nbDims > 0) {
         n_dets = static_cast<int>(scores_alloc_->outputDims.d[0]);
@@ -136,7 +136,7 @@ std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float thr
         return {};
     }
 
-    // ── 5. 拷贝结果到主机 ─────────────────────────────────────────────────
+    // ── 拷贝结果到主机 ───────────────────────────────────────────────────
     std::vector<float> h_scores(n_dets);
     std::vector<int>   h_labels(n_dets);
     std::vector<float> h_boxes(n_dets * 4);
@@ -148,7 +148,7 @@ std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float thr
     CHECK_CUDA(cudaMemcpy(h_boxes.data(),  boxes_alloc_->buffer,
                           n_dets * 4 * sizeof(float), cudaMemcpyDeviceToHost));
 
-    // ── 6. 坐标缩放：从 input 分辨率映射回原图 ───────────────────────────
+    // ── 坐标缩放：从 input 分辨率映射回原图 ─────────────────────────────
     const float sx = static_cast<float>(image.cols) / input_w_;
     const float sy = static_cast<float>(image.rows) / input_h_;
 
@@ -172,4 +172,10 @@ std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float thr
         });
     }
     return detections;
+}
+
+// ── infer: 同步接口，内部调用 inferAsync + syncAndCollect ─────────────────
+std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float threshold) {
+    inferAsync(image);
+    return syncAndCollect(image, threshold);
 }

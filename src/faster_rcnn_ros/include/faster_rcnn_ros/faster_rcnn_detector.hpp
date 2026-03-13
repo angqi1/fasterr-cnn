@@ -46,12 +46,21 @@ public:
 
 class FasterRCNNDetector {
 public:
-    // engine: faster_rcnn.engine (FP16, input 1×3×375×1242)
+    // engine: faster_rcnn.engine (FP16, input 1×3×H×W)
     FasterRCNNDetector(const std::string& engine_path, const std::string& labels_path,
                        int input_h = 375, int input_w = 1242);
     ~FasterRCNNDetector();
 
+    // 同步推理（单引擎用）
     std::vector<Detection> infer(const cv::Mat& image, float threshold = 0.5f);
+
+    // 异步两阶段接口（双引擎并行用）：
+    //   1. inferAsync  — 预处理 + H2D + enqueueV3，不等待 GPU 完成
+    //   2. syncAndCollect — cudaStreamSync + D2H + 后处理
+    // 注意：同一实例不能在 syncAndCollect 之前再次调用 inferAsync
+    void inferAsync(const cv::Mat& image);
+    std::vector<Detection> syncAndCollect(const cv::Mat& image, float threshold);
+
     const std::vector<std::string>& getClassNames() const { return class_names_; }
 
 private:
@@ -70,6 +79,9 @@ private:
 
     int input_h_, input_w_;
     std::vector<std::string> class_names_;
+
+    // blob_ 保存预处理后的 CPU 数据，inferAsync 和 syncAndCollect 之间必须保持有效
+    cv::Mat blob_;
 };
 
 #endif

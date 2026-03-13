@@ -146,18 +146,34 @@ private:
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 统一推理入口：多尺度合并 + 类别专属阈值 + NMS（或单尺度快速路径）
+    // 统一推理入口：类别专属阈值 + NMS（支持单/双引擎）
+    //
+    // 默认配置（单 500×1242 引擎）：
+    //   car_thr=0.25, ped_thr=0.15 → Recall=81.8%, 延迟≈68ms（≤10% over 基准）
+    //
+    // 路径选择：
+    //   fast path : !detector2_ && ped_thr >= car_thr → infer(uniform_thr)
+    //   class path: ped_thr < car_thr（或双引擎）→ inferAsync+syncAndCollect+filterAndNMS
+    //
+    // 双引擎时序（可选，需配置 engine_path_2）：
+    //   CPU: [inferAsync1][inferAsync2] → [syncAndCollect1][syncAndCollect2]
+    //   GPU:     [===engine1===]                （Jetson iGPU 共享资源，无真并行加速）
     // ─────────────────────────────────────────────────────────────────────────
     std::vector<Detection> runInference(const cv::Mat& frame) {
         if (!detector2_ && ped_threshold_ >= threshold_) {
             // 快速路径：单尺度 + 统一阈值（与原始行为相同）
             return detector_->infer(frame, static_cast<float>(threshold_));
         }
-        // 多尺度 / 类别专属路径
         float min_thr = static_cast<float>(std::min(threshold_, ped_threshold_));
-        auto raw = detector_->infer(frame, min_thr);
+
+        // ── Step1: 两引擎同时异步 enqueue（各用独立 CUDA stream）──────────
+        detector_->inferAsync(frame);
+        if (detector2_) detector2_->inferAsync(frame);
+
+        // ── Step2: 依次 sync + collect（GPU 端已在并行执行）─────────────
+        auto raw = detector_->syncAndCollect(frame, min_thr);
         if (detector2_) {
-            auto dets2 = detector2_->infer(frame, min_thr);
+            auto dets2 = detector2_->syncAndCollect(frame, min_thr);
             raw.insert(raw.end(), dets2.begin(), dets2.end());
         }
         return filterAndNMS(raw,

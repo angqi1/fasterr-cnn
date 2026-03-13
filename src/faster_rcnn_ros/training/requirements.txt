@@ -1,0 +1,5 @@
+# 训练专用依赖（Jetson AGX Orin 已内置 torch/torchvision，无需重装）
+nuscenes-devkit>=1.1.11
+onnx>=1.14.0
+onnxsim>=0.4.33
+pyquaternion>=0.9.9
