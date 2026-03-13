@@ -24,10 +24,22 @@ import numpy as np
 import onnx
 from onnx import numpy_helper, helper, TensorProto
 
+import argparse
+
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument('--height', type=int, default=375, help='Input height (default 375)')
+    p.add_argument('--width',  type=int, default=1242, help='Input width  (default 1242)')
+    return p.parse_args()
+
+_args = parse_args()
+INPUT_H = _args.height
+INPUT_W = _args.width
+
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 INPUT_ONNX   = os.path.join(SCRIPT_DIR, 'fasterrcnn_nuscenes.onnx')
-FIXED_ONNX   = os.path.join(SCRIPT_DIR, 'fasterrcnn_nuscenes_fixed_new.onnx')
-OUTPUT_ENGINE = os.path.join(SCRIPT_DIR, 'faster_rcnn_new.engine')
+FIXED_ONNX   = os.path.join(SCRIPT_DIR, f'fasterrcnn_nuscenes_fixed_{INPUT_H}x{INPUT_W}.onnx')
+OUTPUT_ENGINE = os.path.join(SCRIPT_DIR, f'faster_rcnn_{INPUT_H}.engine')
 TRTEXEC      = '/usr/src/tensorrt/bin/trtexec'
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,15 +152,47 @@ def inline_all_if_nodes(graph):
     print(f'  Graph now has {len(graph.node)} nodes')
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 3: TopK static K (precomputed for 375×1242 input)
+# Step 3: TopK static K – computed dynamically for the target input size
 # ─────────────────────────────────────────────────────────────────────────────
-TOPK_K_MAP = {
-    '/rpn/Reshape_26_output_0': 1000,
-    '/rpn/Reshape_27_output_0': 1000,
-    '/rpn/Reshape_28_output_0': 1000,
-    '/rpn/Reshape_29_output_0': 420,
-    '/rpn/Reshape_30_output_0': 120,
-}
+_TOPK_TENSOR_NAMES = [
+    '/rpn/Reshape_26_output_0',
+    '/rpn/Reshape_27_output_0',
+    '/rpn/Reshape_28_output_0',
+    '/rpn/Reshape_29_output_0',
+    '/rpn/Reshape_30_output_0',
+]
+
+def compute_topk_k_map(onnx_path, input_h, input_w):
+    """Run the original ONNX model at (input_h × input_w) via ORT to get the
+    ReduceMin outputs that become the TopK K values for each RPN level."""
+    import onnxruntime as ort
+    import io as _io
+    model = onnx.load(onnx_path)
+    # Expose the ReduceMin outputs as graph outputs for inspection
+    reduce_names = [
+        '/rpn/ReduceMin_output_0',
+        '/rpn/ReduceMin_1_output_0',
+        '/rpn/ReduceMin_2_output_0',
+        '/rpn/ReduceMin_3_output_0',
+        '/rpn/ReduceMin_4_output_0',
+    ]
+    for n in reduce_names:
+        model.graph.output.append(
+            onnx.helper.make_tensor_value_info(n, TensorProto.INT64, None)
+        )
+    buf = _io.BytesIO()
+    onnx.save(model, buf); buf.seek(0)
+    so = ort.SessionOptions(); so.log_severity_level = 3
+    sess = ort.InferenceSession(buf.read(), sess_options=so,
+                                providers=['CPUExecutionProvider'])
+    fake = np.zeros((1, 3, input_h, input_w), dtype=np.float32)
+    out_names = [o.name for o in sess.get_outputs()]
+    results = sess.run(out_names[-5:], {"image": fake})
+    k_map = {t: int(v.flat[0]) for t, v in zip(_TOPK_TENSOR_NAMES, results)}
+    return k_map
+
+# Populated in main() after INPUT_H/INPUT_W are known
+TOPK_K_MAP: dict = {}
 
 def fold_topk_k_to_constants(graph):
     count = 0
@@ -355,7 +399,13 @@ def main():
     print('\n[3] Topological sort (after If inlining) …')
     topological_sort(graph)
 
-    print('\n[4] TopK K → static constants …')
+    print(f'\n[4] Computing TopK K values for {INPUT_H}×{INPUT_W} via ORT …')
+    global TOPK_K_MAP
+    TOPK_K_MAP = compute_topk_k_map(INPUT_ONNX, INPUT_H, INPUT_W)
+    for t, v in TOPK_K_MAP.items():
+        print(f'  {t.split("/")[-1]} = {v}')
+
+    print('\n[4b] TopK K → static constants …')
     fold_topk_k_to_constants(graph)
 
     print('\n[5a] Folding Shape(ConstantOfShape(x)) → Identity(x) …')
@@ -390,9 +440,9 @@ def main():
         f'--onnx={FIXED_ONNX}',
         f'--saveEngine={OUTPUT_ENGINE}',
         '--fp16',
-        '--minShapes=image:1x3x375x1242',
-        '--optShapes=image:1x3x375x1242',
-        '--maxShapes=image:1x3x375x1242',
+        f'--minShapes=image:1x3x{INPUT_H}x{INPUT_W}',
+        f'--optShapes=image:1x3x{INPUT_H}x{INPUT_W}',
+        f'--maxShapes=image:1x3x{INPUT_H}x{INPUT_W}',
         '--workspace=4096',
     ]
     print(' ', ' '.join(cmd))

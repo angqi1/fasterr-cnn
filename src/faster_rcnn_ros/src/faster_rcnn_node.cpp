@@ -3,12 +3,44 @@
 #include <std_msgs/msg/header.hpp>
 #include <cv_bridge/cv_bridge.h>
 #include <opencv2/opencv.hpp>
+#include <opencv2/dnn.hpp>
 #include <filesystem>
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include "faster_rcnn_ros/faster_rcnn_detector.hpp"
 
 namespace fs = std::filesystem;
+
+// ─────────────────── 辅助：多尺度合并 + 类别专属阈值 + NMS ───────────────────
+// pedestrian(6) / motorcycle(7) / bicycle(8) 使用 ped_thr，其余用 car_thr
+static std::vector<Detection> filterAndNMS(
+    const std::vector<Detection>& raw,
+    float car_thr, float ped_thr, float nms_iou = 0.5f)
+{
+    auto classThreshold = [&](int cls) -> float {
+        return (cls == 6 || cls == 7 || cls == 8) ? ped_thr : car_thr;
+    };
+
+    // 按类别分组，留下通过阈值的检测
+    std::map<int, std::pair<std::vector<cv::Rect>, std::vector<float>>> by_class;
+    for (const auto& d : raw) {
+        if (d.confidence >= classThreshold(d.class_id)) {
+            by_class[d.class_id].first.push_back(d.box);
+            by_class[d.class_id].second.push_back(d.confidence);
+        }
+    }
+
+    std::vector<Detection> result;
+    for (auto& [cls, bscore] : by_class) {
+        std::vector<int> nms_idx;
+        cv::dnn::NMSBoxes(bscore.first, bscore.second, 0.0f, nms_iou, nms_idx);
+        for (int i : nms_idx) {
+            result.push_back({bscore.first[i], bscore.second[i], cls});
+        }
+    }
+    return result;
+}
 
 // ─────────────────── 辅助：在帧上绘制检测结果 ───────────────────────────────
 static void drawDetections(cv::Mat& img,
@@ -45,21 +77,39 @@ public:
         declare_parameter<std::string>("input_path",  "");   // 图片文件 / 视频文件 / 图片目录
         declare_parameter<std::string>("output_path", "");   // 结果输出路径（文件或目录）
         declare_parameter<bool>("loop_video", false);         // 视频是否循环
+        // 多尺度 / 类别专属阈值参数
+        declare_parameter<std::string>("engine_path_2", "");    // 第二引擎路径（空=禁用）
+        declare_parameter<double>("ped_threshold", 0.20);       // pedestrian/moto/bike 阈值
+        declare_parameter<int>("input_height_2", 500);          // 第二引擎输入高度
+        declare_parameter<int>("input_width_2",  1242);         // 第二引擎输入宽度
 
         // ── 读取参数 ────────────────────────────────────────────────────────
         auto engine_path   = get_parameter("engine_path").as_string();
         auto labels_path   = get_parameter("labels_path").as_string();
         auto input_topic   = get_parameter("input_topic").as_string();
         auto overlay_topic = get_parameter("overlay_topic").as_string();
-        threshold_    = get_parameter("threshold").as_double();
-        int input_h   = get_parameter("input_height").as_int();
-        int input_w   = get_parameter("input_width").as_int();
-        input_path_   = get_parameter("input_path").as_string();
-        output_path_  = get_parameter("output_path").as_string();
-        loop_video_   = get_parameter("loop_video").as_bool();
+        threshold_     = get_parameter("threshold").as_double();
+        ped_threshold_ = get_parameter("ped_threshold").as_double();
+        int input_h    = get_parameter("input_height").as_int();
+        int input_w    = get_parameter("input_width").as_int();
+        input_path_    = get_parameter("input_path").as_string();
+        output_path_   = get_parameter("output_path").as_string();
+        loop_video_    = get_parameter("loop_video").as_bool();
+        auto engine_path_2 = get_parameter("engine_path_2").as_string();
+        int  input_h2      = get_parameter("input_height_2").as_int();
+        int  input_w2      = get_parameter("input_width_2").as_int();
 
         // ── 初始化检测器 ────────────────────────────────────────────────────
         detector_ = std::make_unique<FasterRCNNDetector>(engine_path, labels_path, input_h, input_w);
+
+        // 第二检测器（多尺度，可选）
+        if (!engine_path_2.empty() && engine_path_2 != "none") {
+            detector2_ = std::make_unique<FasterRCNNDetector>(
+                engine_path_2, labels_path, input_h2, input_w2);
+            RCLCPP_INFO(get_logger(),
+                "[多尺度] 第二引擎: %s (%dx%d)  ped_thr=%.2f",
+                engine_path_2.c_str(), input_h2, input_w2, ped_threshold_);
+        }
 
         // ── 结果话题（两种模式都发布）──────────────────────────────────────
         overlay_pub_ = create_publisher<sensor_msgs::msg::Image>(overlay_topic, 10);
@@ -84,7 +134,7 @@ private:
     void topicCallback(const sensor_msgs::msg::Image::SharedPtr msg) {
         try {
             cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
-            auto detections = detector_->infer(cv_ptr->image, static_cast<float>(threshold_));
+            auto detections = runInference(cv_ptr->image);
 
             cv::Mat overlay = cv_ptr->image.clone();
             drawDetections(overlay, detections, detector_->getClassNames());
@@ -93,6 +143,26 @@ private:
         } catch (const std::exception& e) {
             RCLCPP_ERROR(get_logger(), "[话题模式] 错误: %s", e.what());
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 统一推理入口：多尺度合并 + 类别专属阈值 + NMS（或单尺度快速路径）
+    // ─────────────────────────────────────────────────────────────────────────
+    std::vector<Detection> runInference(const cv::Mat& frame) {
+        if (!detector2_ && ped_threshold_ >= threshold_) {
+            // 快速路径：单尺度 + 统一阈值（与原始行为相同）
+            return detector_->infer(frame, static_cast<float>(threshold_));
+        }
+        // 多尺度 / 类别专属路径
+        float min_thr = static_cast<float>(std::min(threshold_, ped_threshold_));
+        auto raw = detector_->infer(frame, min_thr);
+        if (detector2_) {
+            auto dets2 = detector2_->infer(frame, min_thr);
+            raw.insert(raw.end(), dets2.begin(), dets2.end());
+        }
+        return filterAndNMS(raw,
+            static_cast<float>(threshold_),
+            static_cast<float>(ped_threshold_));
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -217,7 +287,7 @@ private:
 
         // ── 推理 ──────────────────────────────────────────────────────────
         auto t0 = std::chrono::steady_clock::now();
-        auto detections = detector_->infer(frame, static_cast<float>(threshold_));
+        auto detections = runInference(frame);
         double elapsed_ms = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - t0).count();
 
@@ -254,7 +324,8 @@ private:
     }
 
     // ─── 成员变量 ──────────────────────────────────────────────────────────
-    std::unique_ptr<FasterRCNNDetector>  detector_;
+    std::unique_ptr<FasterRCNNDetector>  detector_;   // 主引擎（默认375×1242）
+    std::unique_ptr<FasterRCNNDetector>  detector2_;  // 辅助引擎（可选，500×1242）
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr overlay_pub_;
     rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;  // 话题模式
     rclcpp::TimerBase::SharedPtr file_timer_;                                // 文件模式
@@ -271,7 +342,8 @@ private:
     std::unique_ptr<cv::VideoCapture> cap_;
     std::unique_ptr<cv::VideoWriter>  writer_;
 
-    double threshold_ = 0.5;
+    double threshold_     = 0.5;
+    double ped_threshold_ = 0.20;  // pedestrian/motorcycle/bicycle 专属阈值
 };
 
 int main(int argc, char** argv) {

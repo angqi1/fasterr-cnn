@@ -5,6 +5,9 @@ project(faster_rcnn_ros)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 嵌入运行时库路径，避免 LD_LIBRARY_PATH 依赖
+set(CMAKE_INSTALL_RPATH "/usr/local/lib")
+
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
