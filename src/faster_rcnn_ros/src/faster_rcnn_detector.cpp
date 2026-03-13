@@ -49,29 +49,22 @@ FasterRCNNDetector::FasterRCNNDetector(const std::string& engine_path,
     // 加载 TRT engine
     loadEngine(engine_path);
 
-    // 仅为输入分配固定显存（1×3×H×W float）
-    CHECK_CUDA(cudaMalloc(&d_input_, 3 * input_h_ * input_w_ * sizeof(float)));
+    // 分配输入显存 (1×3×640×640)
+    CHECK_CUDA(cudaMalloc(&d_input_,  3 * input_h_ * input_w_ * sizeof(float)));
 
-    // 动态输出分配器（DDS, 每个输出形状在推理时确定）
-    scores_alloc_ = std::make_unique<OutputAllocator>();
-    labels_alloc_ = std::make_unique<OutputAllocator>();
-    boxes_alloc_  = std::make_unique<OutputAllocator>();
+    // 分配输出显存 (1×84×8400)
+    CHECK_CUDA(cudaMalloc(&d_output_, (4 + NUM_CLASSES) * NUM_ANCHORS * sizeof(float)));
 
-    // 设置输入形状与地址（固定分辨率，只需设一次）
-    context_->setInputShape("image", nvinfer1::Dims4{1, 3, input_h_, input_w_});
-    context_->setTensorAddress("image", d_input_);
-
-    // 注册输出分配器
-    context_->setOutputAllocator("scores", scores_alloc_.get());
-    context_->setOutputAllocator("labels", labels_alloc_.get());
-    context_->setOutputAllocator("boxes",  boxes_alloc_.get());
+    // 绑定张量地址（YOLOv8 静态形状，无需 setInputShape）
+    context_->setTensorAddress("images",  d_input_);
+    context_->setTensorAddress("output0", d_output_);
 }
 
 // ─────────────────────────── Destructor ─────────────────────────────────────
 FasterRCNNDetector::~FasterRCNNDetector() {
-    if (d_input_) cudaFree(d_input_);
-    if (stream_)  cudaStreamDestroy(stream_);
-    // OutputAllocator 析构函数自动释放各自的显存
+    if (d_input_)  cudaFree(d_input_);
+    if (d_output_) cudaFree(d_output_);
+    if (stream_)   cudaStreamDestroy(stream_);
 }
 
 // ─────────────────────────── Load Engine ────────────────────────────────────
@@ -103,26 +96,27 @@ void FasterRCNNDetector::loadEngine(const std::string& engine_path) {
 
 // ─────────────────────────── Inference ──────────────────────────────────────
 std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float threshold) {
-    // ── 1. Letterbox 预处理：等比缩放 + 灰边填充，保持宽高比 ──────────────
-    // 1a. 计算统一缩放比，取高/宽方向的最小值以保证图像完整放入网络输入
+    // ── 1. Letterbox 预处理（YOLOv8 标准训练预处理）──────────────────────
+    // scale = min(640/H, 640/W)，等比缩放 + 灰边填充，保持宽高比
     float scale = std::min(
         static_cast<float>(input_h_) / static_cast<float>(image.rows),
         static_cast<float>(input_w_) / static_cast<float>(image.cols)
     );
     int new_w = static_cast<int>(std::round(image.cols * scale));
     int new_h = static_cast<int>(std::round(image.rows * scale));
+    int pad_x = (input_w_ - new_w) / 2;
+    int pad_y = (input_h_ - new_h) / 2;
 
-    // 1b. 等比缩放
     cv::Mat resized;
     cv::resize(image, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
 
-    // 1c. 创建 letterbox 画布，用 114 灰填充（YOLO/DNN 常用中性值）
-    int pad_x = (input_w_ - new_w) / 2;
-    int pad_y = (input_h_ - new_h) / 2;
+    // 处理 RGBA 图像（如 kace.png）
+    if (resized.channels() == 4) cv::cvtColor(resized, resized, cv::COLOR_BGRA2BGR);
+
     cv::Mat canvas(input_h_, input_w_, CV_8UC3, cv::Scalar(114, 114, 114));
     resized.copyTo(canvas(cv::Rect(pad_x, pad_y, new_w, new_h)));
 
-    // 1d. BGR→RGB + /255.0 + CHW 排列（画布已是目标分辨率，无二次缩放）
+    // ── 2. BGR→RGB + /255.0 + CHW 排列 ───────────────────────────────────
     cv::Mat blob;
     cv::dnn::blobFromImage(canvas, blob,
                            1.0 / 255.0,
@@ -132,68 +126,88 @@ std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float thr
                            /*crop=*/false,
                            CV_32F);
 
-    // ── 2. 上传输入到 GPU ─────────────────────────────────────────────────
+    // ── 3. 上传输入到 GPU ─────────────────────────────────────────────────
     const size_t input_bytes = 3 * input_h_ * input_w_ * sizeof(float);
     CHECK_CUDA(cudaMemcpyAsync(d_input_, blob.data, input_bytes,
                                cudaMemcpyHostToDevice, stream_));
 
-    // ── 3. TRT 8.5 enqueueV3（替代旧的 executeV2/enqueueV2）────────────────
-    //    DDS 输出：scores(-1,) labels(-1,) boxes(-1,4)
-    //    引擎会回调 OutputAllocator::reallocateOutput / notifyShape
+    // ── 4. TRT 推理 ───────────────────────────────────────────────────────
     if (!context_->enqueueV3(stream_)) {
         throw std::runtime_error("TensorRT enqueueV3 failed");
     }
     CHECK_CUDA(cudaStreamSynchronize(stream_));
 
-    // ── 4. 读取动态输出维度 ───────────────────────────────────────────────
-    int n_dets = 0;
-    if (scores_alloc_->outputDims.nbDims > 0) {
-        n_dets = static_cast<int>(scores_alloc_->outputDims.d[0]);
+    // ── 5. 下载输出 (1×84×8400) ───────────────────────────────────────────
+    const int out_size = (4 + NUM_CLASSES) * NUM_ANCHORS;
+    std::vector<float> h_output(out_size);
+    CHECK_CUDA(cudaMemcpy(h_output.data(), d_output_,
+                          out_size * sizeof(float), cudaMemcpyDeviceToHost));
+
+    // ── 6. 解码 YOLOv8 输出 [84, 8400] ────────────────────────────────────
+    // 内存布局: h_output[c * NUM_ANCHORS + i] = anchor i 的 channel c
+    //   [0:4]  = cx, cy, w, h  (640×640 像素空间)
+    //   [4:84] = 80 类别分数（已经过 sigmoid）
+    std::vector<cv::Rect>  boxes_nms;
+    std::vector<float>     scores_nms;
+    std::vector<int>       class_nms;
+
+    for (int i = 0; i < NUM_ANCHORS; ++i) {
+        // 找最大类别分数
+        float max_score = 0.f;
+        int   max_cls   = 0;
+        for (int c = 0; c < NUM_CLASSES; ++c) {
+            float s = h_output[(4 + c) * NUM_ANCHORS + i];
+            if (s > max_score) { max_score = s; max_cls = c; }
+        }
+        if (max_score < threshold) continue;
+
+        float cx = h_output[0 * NUM_ANCHORS + i];
+        float cy = h_output[1 * NUM_ANCHORS + i];
+        float bw = h_output[2 * NUM_ANCHORS + i];
+        float bh = h_output[3 * NUM_ANCHORS + i];
+
+        int ix = static_cast<int>(cx - bw / 2.f);
+        int iy = static_cast<int>(cy - bh / 2.f);
+        int iw = static_cast<int>(bw);
+        int ih = static_cast<int>(bh);
+        boxes_nms.emplace_back(ix, iy, iw, ih);
+        scores_nms.push_back(max_score);
+        class_nms.push_back(max_cls);
     }
-    if (n_dets <= 0 || !scores_alloc_->buffer) {
-        return {};
-    }
 
-    // ── 5. 拷贝结果到主机 ─────────────────────────────────────────────────
-    std::vector<float> h_scores(n_dets);
-    std::vector<int>   h_labels(n_dets);
-    std::vector<float> h_boxes(n_dets * 4);
+    if (boxes_nms.empty()) return {};
 
-    CHECK_CUDA(cudaMemcpy(h_scores.data(), scores_alloc_->buffer,
-                          n_dets * sizeof(float), cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_labels.data(), labels_alloc_->buffer,
-                          n_dets * sizeof(int),   cudaMemcpyDeviceToHost));
-    CHECK_CUDA(cudaMemcpy(h_boxes.data(),  boxes_alloc_->buffer,
-                          n_dets * 4 * sizeof(float), cudaMemcpyDeviceToHost));
+    // ── 7. NMS ────────────────────────────────────────────────────────────
+    std::vector<int> keep;
+    cv::dnn::NMSBoxes(boxes_nms, scores_nms, threshold, NMS_THRESH, keep);
 
-    // ── 6. 坐标反变换：letterbox 网络坐标 → 原图坐标 ────────────────────
-    //    网络输出坐标 → 减去 padding → 除以缩放比 → 截断到原图范围
+    // ── 8. 坐标反变换：letterbox 网络坐标 → 原图坐标 ─────────────────────
     std::vector<Detection> detections;
-    detections.reserve(n_dets);
+    detections.reserve(keep.size());
 
-    for (int i = 0; i < n_dets; ++i) {
-        if (h_scores[i] < threshold) continue;
+    for (int idx : keep) {
+        const auto& b = boxes_nms[idx];
 
-        auto unmap_x = [&](float cx) -> int {
+        auto unmap_x = [&](float cx_) -> int {
             return std::max(0, std::min(
-                static_cast<int>((cx - pad_x) / scale), image.cols - 1));
+                static_cast<int>((cx_ - pad_x) / scale), image.cols - 1));
         };
-        auto unmap_y = [&](float cy) -> int {
+        auto unmap_y = [&](float cy_) -> int {
             return std::max(0, std::min(
-                static_cast<int>((cy - pad_y) / scale), image.rows - 1));
+                static_cast<int>((cy_ - pad_y) / scale), image.rows - 1));
         };
 
-        int x1 = unmap_x(h_boxes[i*4+0]);
-        int y1 = unmap_y(h_boxes[i*4+1]);
-        int x2 = unmap_x(h_boxes[i*4+2]);
-        int y2 = unmap_y(h_boxes[i*4+3]);
+        int x1 = unmap_x(static_cast<float>(b.x));
+        int y1 = unmap_y(static_cast<float>(b.y));
+        int x2 = unmap_x(static_cast<float>(b.x + b.width));
+        int y2 = unmap_y(static_cast<float>(b.y + b.height));
 
         if (x2 <= x1 || y2 <= y1) continue;
 
         detections.push_back({
             cv::Rect(cv::Point(x1, y1), cv::Point(x2, y2)),
-            h_scores[i],
-            h_labels[i]
+            scores_nms[idx],
+            class_nms[idx]
         });
     }
     return detections;
