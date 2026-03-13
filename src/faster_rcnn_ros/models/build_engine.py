@@ -164,12 +164,18 @@ def fold_topk_k_to_constants(graph):
     print(f'  Folded {count} TopK K tensors to static constants')
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 4: ConstantOfShape fix
-#   A) Fold:  Shape(ConstantOfShape(x)) → x
-#   B) DCE:   remove dead ConstantOfShape nodes
+# Step 4: ConstantOfShape fix (three sub-steps)
+#   A) Fold:  Shape(ConstantOfShape(x)) → Identity(x)
+#   B) Elim:  Add(ConstantOfShape(0), x) / Add(x, ConstantOfShape(0)) → Identity(x)
+#   C) DCE:   remove dead ConstantOfShape nodes
+#
+# Background: TRT 8.5 hashes weights by raw bytes. INT32(0) and FLOAT32(0.0)
+# both produce 4 bytes \x00\x00\x00\x00, causing a collision. Steps A+B remove
+# all zero-ConstantOfShape usages so DCE can delete them all. Step 5 then keeps
+# the remaining ConstantOfShape.value as INT64 (8 bytes) to avoid collision.
 # ─────────────────────────────────────────────────────────────────────────────
 def fold_shape_of_constantofshape(graph):
-    """Shape(ConstantOfShape(x)) → x  (result equals original shape input x)"""
+    """Shape(ConstantOfShape(x)) → Identity(x)  (shape of output = x)"""
     cos_out_to_input = {}
     for node in graph.node:
         if node.op_type == 'ConstantOfShape' and node.input and node.output:
@@ -178,13 +184,50 @@ def fold_shape_of_constantofshape(graph):
     count = 0
     for node in graph.node:
         if node.op_type == 'Shape' and node.input[0] in cos_out_to_input:
-            # Replace: Shape(cos_out) → Identity(original_input_of_cos)
             orig_input = cos_out_to_input[node.input[0]]
             node.op_type = 'Identity'
             del node.input[:]
             node.input.append(orig_input)
             count += 1
-    print(f'  Folded {count} Shape(ConstantOfShape(x)) → x')
+    print(f'  Folded {count} Shape(ConstantOfShape(x)) → Identity(x)')
+
+def eliminate_add_zero_patterns(graph):
+    """Add(ConstantOfShape(0), x) / Add(x, ConstantOfShape(0)) → Identity(x)"""
+    # Collect ConstantOfShape outputs that produce all-zero tensors
+    cos_zero_outputs = set()
+    for node in graph.node:
+        if node.op_type == 'ConstantOfShape':
+            for attr in node.attribute:
+                if attr.name == 'value' and attr.HasField('t'):
+                    val = numpy_helper.to_array(attr.t)
+                    if val.size == 0 or (val == 0).all():
+                        for o in node.output:
+                            cos_zero_outputs.add(o)
+
+    nodes_to_remove = set()   # Add node output names to remove
+    nodes_to_add    = []
+    for node in graph.node:
+        if node.op_type == 'Add' and len(node.input) == 2:
+            a, b   = node.input
+            out    = node.output[0]
+            keep   = None
+            if a in cos_zero_outputs:
+                keep = b
+            elif b in cos_zero_outputs:
+                keep = a
+            if keep is not None:
+                nodes_to_add.append(
+                    helper.make_node('Identity', [keep], [out], name=f'elim_add0_{out}')
+                )
+                nodes_to_remove.add(out)
+
+    if nodes_to_add:
+        new_nodes = [n for n in graph.node
+                     if not (n.op_type == 'Add' and n.output and n.output[0] in nodes_to_remove)]
+        new_nodes.extend(nodes_to_add)
+        del graph.node[:]
+        graph.node.extend(new_nodes)
+        print(f'  Eliminated {len(nodes_to_add)} Add-zero patterns → Identity')
 
 def eliminate_dead_constantofshape(graph):
     """Remove ConstantOfShape nodes whose outputs are never consumed."""
@@ -315,10 +358,13 @@ def main():
     print('\n[4] TopK K → static constants …')
     fold_topk_k_to_constants(graph)
 
-    print('\n[5a] Folding Shape(ConstantOfShape(x)) → x …')
+    print('\n[5a] Folding Shape(ConstantOfShape(x)) → Identity(x) …')
     fold_shape_of_constantofshape(graph)
 
-    print('\n[5b] Dead code elimination (ConstantOfShape) …')
+    print('\n[5b] Eliminating Add(ConstantOfShape(0), x) → Identity(x) …')
+    eliminate_add_zero_patterns(graph)
+
+    print('\n[5c] Dead code elimination (ConstantOfShape) …')
     eliminate_dead_constantofshape(graph)
 
     print('\n[6] INT64 → INT32 (ConstantOfShape.value kept as INT64) …')
