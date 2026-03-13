@@ -1,11 +1,11 @@
 <launch>
     <!-- 通用参数 -->
-    <arg name="engine_path"   default="$(find-pkg-share faster_rcnn_ros)/models/yolov8n.engine"/>
-    <arg name="labels_path"   default="$(find-pkg-share faster_rcnn_ros)/models/coco_labels.txt"/>
+    <arg name="engine_path"   default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn.engine"/>
+    <arg name="labels_path"   default="$(find-pkg-share faster_rcnn_ros)/models/labels.txt"/>
     <arg name="overlay_topic" default="/detectnet/overlay"/>
     <arg name="threshold"     default="0.4"/>
-    <arg name="input_height"  default="640"/>
-    <arg name="input_width"   default="640"/>
+    <arg name="input_height"  default="375"/>
+    <arg name="input_width"   default="1242"/>
 
     <!-- 话题模式（input_path 为空时生效）-->
     <arg name="input_topic"   default="/detectnet/image_in"/>
