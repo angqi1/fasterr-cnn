@@ -103,10 +103,28 @@ void FasterRCNNDetector::loadEngine(const std::string& engine_path) {
 
 // ─────────────────────────── Inference ──────────────────────────────────────
 std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float threshold) {
-    // ── 1. 预处理：resize + BGR→RGB + /255.0 + CHW 排列 ──────────────────
-    //    cv::dnn::blobFromImage 输出连续内存 (1, 3, H, W) float，即 CHW
+    // ── 1. Letterbox 预处理：等比缩放 + 灰边填充，保持宽高比 ──────────────
+    // 1a. 计算统一缩放比，取高/宽方向的最小值以保证图像完整放入网络输入
+    float scale = std::min(
+        static_cast<float>(input_h_) / static_cast<float>(image.rows),
+        static_cast<float>(input_w_) / static_cast<float>(image.cols)
+    );
+    int new_w = static_cast<int>(std::round(image.cols * scale));
+    int new_h = static_cast<int>(std::round(image.rows * scale));
+
+    // 1b. 等比缩放
+    cv::Mat resized;
+    cv::resize(image, resized, cv::Size(new_w, new_h), 0, 0, cv::INTER_LINEAR);
+
+    // 1c. 创建 letterbox 画布，用 114 灰填充（YOLO/DNN 常用中性值）
+    int pad_x = (input_w_ - new_w) / 2;
+    int pad_y = (input_h_ - new_h) / 2;
+    cv::Mat canvas(input_h_, input_w_, CV_8UC3, cv::Scalar(114, 114, 114));
+    resized.copyTo(canvas(cv::Rect(pad_x, pad_y, new_w, new_h)));
+
+    // 1d. BGR→RGB + /255.0 + CHW 排列（画布已是目标分辨率，无二次缩放）
     cv::Mat blob;
-    cv::dnn::blobFromImage(image, blob,
+    cv::dnn::blobFromImage(canvas, blob,
                            1.0 / 255.0,
                            cv::Size(input_w_, input_h_),
                            cv::Scalar(),
@@ -148,20 +166,27 @@ std::vector<Detection> FasterRCNNDetector::infer(const cv::Mat& image, float thr
     CHECK_CUDA(cudaMemcpy(h_boxes.data(),  boxes_alloc_->buffer,
                           n_dets * 4 * sizeof(float), cudaMemcpyDeviceToHost));
 
-    // ── 6. 坐标缩放：从 input 分辨率映射回原图 ───────────────────────────
-    const float sx = static_cast<float>(image.cols) / input_w_;
-    const float sy = static_cast<float>(image.rows) / input_h_;
-
+    // ── 6. 坐标反变换：letterbox 网络坐标 → 原图坐标 ────────────────────
+    //    网络输出坐标 → 减去 padding → 除以缩放比 → 截断到原图范围
     std::vector<Detection> detections;
     detections.reserve(n_dets);
 
     for (int i = 0; i < n_dets; ++i) {
         if (h_scores[i] < threshold) continue;
 
-        int x1 = std::max(0, std::min(static_cast<int>(h_boxes[i*4+0] * sx), image.cols - 1));
-        int y1 = std::max(0, std::min(static_cast<int>(h_boxes[i*4+1] * sy), image.rows - 1));
-        int x2 = std::max(0, std::min(static_cast<int>(h_boxes[i*4+2] * sx), image.cols - 1));
-        int y2 = std::max(0, std::min(static_cast<int>(h_boxes[i*4+3] * sy), image.rows - 1));
+        auto unmap_x = [&](float cx) -> int {
+            return std::max(0, std::min(
+                static_cast<int>((cx - pad_x) / scale), image.cols - 1));
+        };
+        auto unmap_y = [&](float cy) -> int {
+            return std::max(0, std::min(
+                static_cast<int>((cy - pad_y) / scale), image.rows - 1));
+        };
+
+        int x1 = unmap_x(h_boxes[i*4+0]);
+        int y1 = unmap_y(h_boxes[i*4+1]);
+        int x2 = unmap_x(h_boxes[i*4+2]);
+        int y2 = unmap_y(h_boxes[i*4+3]);
 
         if (x2 <= x1 || y2 <= y1) continue;
 
