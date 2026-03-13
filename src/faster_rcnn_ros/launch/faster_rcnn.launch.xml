@@ -1,19 +1,33 @@
 <launch>
-    <arg name="engine_path" default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn.engine"/>
-    <arg name="labels_path" default="$(find-pkg-share faster_rcnn_ros)/models/labels.txt"/>
-    <arg name="input_topic" default="/camera/image_raw"/>
+    <!-- 通用参数 -->
+    <arg name="engine_path"   default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn.engine"/>
+    <arg name="labels_path"   default="$(find-pkg-share faster_rcnn_ros)/models/labels.txt"/>
     <arg name="overlay_topic" default="/detectnet/overlay"/>
-    <arg name="threshold" default="0.5"/>
-    <arg name="input_height" default="480"/>
-    <arg name="input_width" default="640"/>
+    <arg name="threshold"     default="0.4"/>
+    <arg name="input_height"  default="375"/>
+    <arg name="input_width"   default="1242"/>
+
+    <!-- 话题模式（input_path 为空时生效）-->
+    <arg name="input_topic"   default="/detectnet/image_in"/>
+
+    <!-- 文件模式（设置 input_path 后自动切换，input_topic 被忽略）-->
+    <!-- input_path : 图片文件 / 视频文件 / 图片目录，留空则使用话题模式 -->
+    <!-- output_path: 结果图片文件 / 结果视频文件 / 结果目录，留空则不保存 -->
+    <!-- loop_video : 视频到末尾后是否循环（默认 false）-->
+    <arg name="input_path"    default=""/>
+    <arg name="output_path"   default=""/>
+    <arg name="loop_video"    default="false"/>
 
     <node pkg="faster_rcnn_ros" exec="faster_rcnn_node" output="screen">
-        <param name="engine_path" value="$(var engine_path)"/>
-        <param name="labels_path" value="$(var labels_path)"/>
-        <param name="input_topic" value="$(var input_topic)"/>
+        <param name="engine_path"   value="$(var engine_path)"/>
+        <param name="labels_path"   value="$(var labels_path)"/>
         <param name="overlay_topic" value="$(var overlay_topic)"/>
-        <param name="threshold" value="$(var threshold)"/>
-        <param name="input_height" value="$(var input_height)"/>
-        <param name="input_width" value="$(var input_width)"/>
+        <param name="threshold"     value="$(var threshold)"/>
+        <param name="input_height"  value="$(var input_height)"/>
+        <param name="input_width"   value="$(var input_width)"/>
+        <param name="input_topic"   value="$(var input_topic)"/>
+        <param name="input_path"    value="$(var input_path)"/>
+        <param name="output_path"   value="$(var output_path)"/>
+        <param name="loop_video"    value="$(var loop_video)"/>
     </node>
 </launch>
