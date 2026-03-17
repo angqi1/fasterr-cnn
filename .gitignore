@@ -31,5 +31,14 @@ __pycache__/
 *.avi
 *.mov
 
-# 推理测试图片结果
+# 推理测试图片结果（生成的对比/可视化图）
 test_images/results/
+test_images/results_cpp/
+test_images/results_cpp_baseline/
+test_images/results_opt/
+
+# KITTI 下载的原始图片和标注（可通过 download_kitti_subset.py 重新下载）
+test_images/*.png
+test_images/*.jpg
+test_images/kitti_*/
+test_images/*.zip
