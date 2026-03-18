@@ -4,14 +4,14 @@
     <arg name="engine_path"   default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn_500.engine"/>
     <arg name="labels_path"   default="$(find-pkg-share faster_rcnn_ros)/models/labels.txt"/>
     <arg name="overlay_topic" default="/detectnet/overlay"/>
-    <arg name="threshold"     default="0.25"/>  <!-- 车辆置信度阈值 -->
+    <arg name="threshold"     default="0.5"/>   <!-- 车辆置信度阈值 -->
     <arg name="input_height"  default="500"/>
     <arg name="input_width"   default="1242"/>
 
     <!-- 多尺度第二引擎（留空="none" 则禁用多尺度）-->
     <!-- 当前已禁用：单500引擎即可达到 ≥80% Recall，无需双引擎 -->
     <arg name="engine_path_2"  default="none"/>
-    <arg name="ped_threshold"  default="0.15"/>  <!-- 行人置信度阈值（低于车辆以提升召回）-->
+    <arg name="ped_threshold"  default="0.5"/>   <!-- 行人置信度阈值 -->
     <arg name="input_height_2" default="500"/>
     <arg name="input_width_2"  default="1242"/>
 

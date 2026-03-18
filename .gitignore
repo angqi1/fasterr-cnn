@@ -36,6 +36,11 @@ test_images/results/
 test_images/results_cpp/
 test_images/results_cpp_baseline/
 test_images/results_opt/
+test_images/compare_results/FP16_thr0.25/
+test_images/compare_results/FP16_thr0.5/
+test_images/compare_results/INT8_thr0.25/
+test_images/compare_results/INT8_thr0.5/
+test_images/compare_results/comparison_mosaic.jpg
 
 # KITTI 下载的原始图片和标注（可通过 download_kitti_subset.py 重新下载）
 test_images/*.png
