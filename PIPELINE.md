@@ -591,3 +591,112 @@ python3 build_engine.py
 # 自动完成：ONNX 修复（INT64/ConstantOfShape/Reshape/If 等问题）→ trtexec 构建
 # 输出：faster_rcnn_new.engine（FP16，375×1242，约 15 分钟）
 ```
+
+---
+
+## 阶段四：推理性能分析与优化
+
+### 4.1 性能分析工具
+
+```bash
+# 运行细粒度分析（3种方法 × 4引擎）
+python3 profile_inference.py
+
+# 参数配置（文件顶部）：
+#   N_WARMUP=5    预热次数
+#   N_REPEAT=20   测量重复次数
+#   N_IMAGES=20   使用图像数量
+```
+
+`profile_inference.py` 将推理管道分为 6 个阶段计时：
+`imread → preprocess → H2D → execute → D2H → postprocess`
+
+支持 3 种优化方法对比：
+- **Method A（原始）**: `cv2.dnn.blobFromImage` + 可分页内存 `cudaMemcpy`
+- **Method B（Pinned）**: 锁页内存 + 异步 memcpy
+- **Method C（Letterbox）**: 等比例缩放（保持宽高比）+ Pinned
+
+### 4.2 性能基准（Jetson AGX Orin）
+
+#### profile_inference.py — 全流程分阶段计时（N=20，Method A）
+
+| 引擎 | preprocess | H2D | **execute** | D2H | total | execute占比 |
+|------|-----------|-----|------------|-----|-------|-----------|
+| **FP16_375h** | 3.0ms | 1.2ms | **78.9ms** | 1.0ms | **84.2ms** | 93.7% |
+| FP16_500h | 5.5ms | 1.6ms | 93.1ms | 0.7ms | 101.0ms | 92.2% |
+| INT8_500h | 5.2ms | 1.6ms | 87.3ms | 1.8ms | 96.0ms | 90.9% |
+| FP16_700h | 6.8ms | 2.1ms | 91.0ms | 1.2ms | 101.2ms | 89.9% |
+| FP16_700h + Letterbox | 9.4ms | 1.2ms | 87.5ms | 1.0ms | 99.3ms | 88.1% |
+
+#### CUDA Event GPU 计算时间（真实 GPU 耗时）
+
+| 引擎 | GPU 均值 | GPU 最小 | Python 额外开销 |
+|------|---------|---------|--------------|
+| **FP16_375h** | **76.5ms** | 71.8ms | 2.4ms ✓ |
+| FP16_500h | 73.4ms | 64.3ms | 19.7ms ⚠️ |
+| INT8_500h | 89.3ms | 80.7ms | -2.0ms ❓ |
+| FP16_700h | 81.9ms | 71.1ms | 9.1ms |
+
+#### bench_single.py — 独立单引擎 execute 计时（N=100，execute_async_v3）
+
+> 每次进程仅加载一个引擎，避免多引擎共存干扰；等同于纯推理 execute 耗时。
+
+| 引擎 | 精度模式 | 中位数 | 均值 | 最小 | P90 | vs FP16_375h |
+|------|---------|-------|------|------|-----|-------------|
+| **FP16_375h** | FP16 | **101ms** | 99.8ms | 71ms | 113ms | 基准 |
+| INT8_375h（无校准） | FP32+FP16+**INT8** | 127ms | 127.6ms | 102ms | 133ms | **+25% 慢** ⚠️ |
+| INT8_500h（无校准） | FP16 fallback | 98ms | 101.0ms | 96ms | 108ms | -3% ≈ 持平 |
+
+> **关键对比**：INT8_375h（59MB，确实有 INT8 层）比纯 FP16_375h（115MB）慢约 25%。  
+> 原因：无校准 → 量化范围不准 → INT8↔FP16 格式转换代价超过 INT8 计算收益。
+
+### 4.3 关键发现
+
+#### 发现 1：Execute 占 89~94% 总延迟
+瓶颈完全在 GPU 计算本身，优化预处理/内存传输收益微乎其微。
+
+**结论**：Pinned Memory（Method B）、Letterbox（Method C）对总耗时无实质改善。
+
+#### 发现 2：FP16_375h 是当前最优配置
+- GPU 计算仅 76.5ms（最小输入尺寸 375×1242 = 466K 像素）
+- Python 额外开销最低（2.4ms）
+- 总延迟 **84ms** — 比 FP16_500h 快 17ms，比 FP16_700h 快 17ms
+
+#### 发现 3：无校准 INT8 比 FP16 更慢——两种情形均已验证
+
+**根因确认**：`build_all_precisions.sh` 用 `--fp16 --int8` **无校准数据** 构建：
+```bash
+$TRTEXEC --onnx=... --saveEngine=... --fp16 --int8 \  # 注意：无 --calib
+  --minShapes=... --optShapes=... --maxShapes=...
+```
+
+**情形 A — INT8_500h**：TRT 选择对所有层 fallback 到 FP16（`Precision: FP32`）  
+→ 实际无 INT8 计算，但有微量转换开销 → 速度与 FP16_375h 持平（~98ms）
+
+**情形 B — INT8_375h**：TRT 实际插入 INT8 层（`Precision: FP32+FP16+INT8`，文件 59MB）  
+→ 量化范围用默认值（不准确）→ INT8↔FP16 格式转换代价超过整数计算节省  
+→ 实测中位数 **127ms，比 FP16_375h（101ms）慢 25%**
+
+**结论**：无校准的 INT8 构建在 Faster R-CNN 上没有速度收益，反而有速度损失。
+
+#### 发现 4：INT8 PTQ 对 Faster R-CNN 的根本限制
+
+尝试用 100 张 KITTI 图像进行真实 INT8 PTQ 校准 (`build_int8_calibrated_engine.py`)，失败于：
+```
+[calibrator.cpp::calibrateEngine::1181] Error Code 2: Internal Error
+(Assertion context->executeV2(&bindings[0]) failed.)
+[helpers.h::divUp::70] Error Code 2: Internal Error (Assertion n > 0 failed.)
+```
+
+**根因**：TRT 8.5 在校准推理时调用 `executeV2`，遇到 Faster R-CNN 的动态 NMS 输出（检测数为 0），触发除零断言。**这是 TRT 8.5 对二阶段检测器 INT8 PTQ 的已知限制**，无法绕过（除非 QAT 重训）。
+
+### 4.4 优化建议与路线图
+
+| 优化方向 | 预期收益 | 实现难度 | 优先级 |
+|---------|---------|---------|-------|
+| 量化感知训练（QAT）重训模型 | -25~35% 延迟 | 高（需重训） | 仅大规模部署时值得 |
+| 切换至 YOLO 系列（支持 INT8 PTQ）| -40~60% 延迟 | 高（改模型） | 长期优化路径 |
+| 当前帧 execute 期间异步预处理下帧 | 0 延迟改善, +吞吐量 | 中（多线程） | 若需高帧率可做 |
+| Letterbox 预处理（FP16_700h） | 0 速度改善, +检测质量 | 已实现 | nuImages 部署使用 |
+
+**结论**：当前平台（Jetson AGX Orin + TRT 8.5 + Faster R-CNN）已接近最优，**FP16_375h（84ms）是推荐配置**。进一步提速需更换模型架构或进行 QAT 重训。

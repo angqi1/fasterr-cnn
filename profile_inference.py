@@ -53,10 +53,11 @@ N_REPEAT    = 20  # 每帧重复推理次数（取均值）
 N_IMAGES    = 20   # 测试图片数
 
 ENGINES = [
-    ("FP16_375h", "faster_rcnn_375.engine", 375, 1242),
-    ("FP16_500h", "faster_rcnn_500.engine", 500, 1242),
-    ("INT8_500h", "faster_rcnn_500_int8.engine", 500, 1242),
-    ("FP16_700h", "faster_rcnn_700.engine", 700, 1242),
+    ("FP16_375h",      "faster_rcnn_375.engine",      375, 1242),
+    ("INT8_375h(新)",  "faster_rcnn_375_int8.engine",  375, 1242),
+    ("FP16_500h",      "faster_rcnn_500.engine",       500, 1242),
+    ("INT8_500h",      "faster_rcnn_500_int8.engine",  500, 1242),
+    ("FP16_700h",      "faster_rcnn_700.engine",       700, 1242),
 ]
 
 
@@ -80,7 +81,6 @@ class ProfilerBaseline:
         trt.init_libnvinfer_plugins(logger, "")
         self._eng = trt.Runtime(logger).deserialize_cuda_engine(open(engine_path,"rb").read())
         self._ctx = self._eng.create_execution_context()
-        self._ctx.set_input_shape("image", (1, 3, H, W))
         self._d_inp    = _malloc(3 * H * W * 4)
         self._d_scores = _malloc(MAX_DET * 4)
         self._d_labels = _malloc(MAX_DET * 4)
@@ -89,6 +89,7 @@ class ProfilerBaseline:
         self._ctx.set_tensor_address("scores", self._d_scores)
         self._ctx.set_tensor_address("labels", self._d_labels)
         self._ctx.set_tensor_address("boxes",  self._d_boxes)
+        self._ctx.set_input_shape("image", (1, 3, H, W))
 
     def run_one(self, bgr):
         t = {}
@@ -147,7 +148,6 @@ class ProfilerPinned:
         trt.init_libnvinfer_plugins(logger, "")
         self._eng = trt.Runtime(logger).deserialize_cuda_engine(open(engine_path,"rb").read())
         self._ctx = self._eng.create_execution_context()
-        self._ctx.set_input_shape("image", (1, 3, H, W))
         self._d_inp    = _malloc(3 * H * W * 4)
         self._d_scores = _malloc(MAX_DET * 4)
         self._d_labels = _malloc(MAX_DET * 4)
@@ -156,6 +156,7 @@ class ProfilerPinned:
         self._ctx.set_tensor_address("scores", self._d_scores)
         self._ctx.set_tensor_address("labels", self._d_labels)
         self._ctx.set_tensor_address("boxes",  self._d_boxes)
+        self._ctx.set_input_shape("image", (1, 3, H, W))
         # Pinned host buffers
         n_inp = 3 * H * W
         self._h_inp_ptr = _malloc_host(n_inp * 4)
@@ -227,7 +228,6 @@ class ProfilerLetterbox:
         trt.init_libnvinfer_plugins(logger, "")
         self._eng = trt.Runtime(logger).deserialize_cuda_engine(open(engine_path,"rb").read())
         self._ctx = self._eng.create_execution_context()
-        self._ctx.set_input_shape("image", (1, 3, H, W))
         self._d_inp    = _malloc(3 * H * W * 4)
         self._d_scores = _malloc(MAX_DET * 4)
         self._d_labels = _malloc(MAX_DET * 4)
@@ -236,6 +236,7 @@ class ProfilerLetterbox:
         self._ctx.set_tensor_address("scores", self._d_scores)
         self._ctx.set_tensor_address("labels", self._d_labels)
         self._ctx.set_tensor_address("boxes",  self._d_boxes)
+        self._ctx.set_input_shape("image", (1, 3, H, W))
         n_inp = 3 * H * W
         self._h_inp_ptr = _malloc_host(n_inp * 4)
         self._h_inp = np.frombuffer((ctypes.c_float * n_inp).from_address(self._h_inp_ptr),

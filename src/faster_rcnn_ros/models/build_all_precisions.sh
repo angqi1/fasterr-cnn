@@ -68,6 +68,19 @@ else
 fi
 
 # ── INT8（无校准，PTQ 需额外数据，此处使用 FP16+INT8 混合模式）─────────────
+# ⚠️  重要说明：此处构建的 INT8 引擎没有校准数据（PTQ Calibration）
+#
+# 已尝试用 100 张 KITTI 图像进行 PTQ 校准 (build_int8_calibrated_engine.py)，
+# 但 Faster R-CNN 的动态 NMS 输出导致 TRT 8.5 calibrateEngine 内部断言失败：
+#   Error: calibrator.cpp::calibrateEngine::1181 - context->executeV2() failed
+#   Error: helpers.h::divUp::70 - Assertion n > 0 failed (NMS 0检测时触发)
+# 这是 TRT 8.5 对二阶段检测器 INT8 PTQ 的已知限制。
+#
+# 无校准 INT8 的实际效果：
+# - 权重以 INT8 存储（文件约 59MB，FP16 为 115MB）
+# - 大多数激活层 fallback 到 FP16（因无量化范围信息）
+# - 实际性能 87ms，FP16_500h 为 93ms，FP16_375h 为 84ms
+# - 结论：无校准 INT8 对 Faster R-CNN 无实质加速效果──
 ENGINE_INT8="${SCRIPT_DIR}/faster_rcnn_${HEIGHT}_int8.engine"
 if [ -f "$ENGINE_INT8" ]; then
     echo "[SKIP] INT8 引擎已存在: $ENGINE_INT8"
