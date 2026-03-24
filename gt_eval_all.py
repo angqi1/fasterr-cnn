@@ -30,10 +30,11 @@ KITTI_LBLS  = WS / "test_images/kitti_100/labels"
 OUT_BASE    = WS / "test_images/compare_results"
 ROS_SETUP   = WS / "install/setup.bash"
 
-ENGINE_FP16     = MODELS_DIR / "faster_rcnn_500.engine"
-ENGINE_INT8     = MODELS_DIR / "faster_rcnn_500_int8.engine"
-ENGINE_FP16_375 = MODELS_DIR / "faster_rcnn_375.engine"
-ENGINE_FP16_320 = MODELS_DIR / "faster_rcnn_320.engine"
+ENGINE_FP16       = MODELS_DIR / "faster_rcnn_500.engine"
+ENGINE_INT8       = MODELS_DIR / "faster_rcnn_500_int8.engine"
+ENGINE_FP16_375   = MODELS_DIR / "faster_rcnn_375.engine"
+ENGINE_FP16_320   = MODELS_DIR / "faster_rcnn_320.engine"
+ENGINE_FP16_320AR = MODELS_DIR / "faster_rcnn_320x1060.engine"
 
 # NOTE: 375×1242 是训练时使用的尺寸，500×1242 需要模型对齐 padding
 
@@ -248,8 +249,10 @@ CONFIGS = [
     ("FP16_500h            thr=0.5", str(ENGINE_FP16),     0.50, 500, 1242),
     ("INT8_500h            thr=0.3", str(ENGINE_INT8),     0.30, 500, 1242),
     ("INT8_500h            thr=0.5", str(ENGINE_INT8),     0.50, 500, 1242),
-    ("FP16_320×960         thr=0.3", str(ENGINE_FP16_320), 0.30, 320,  960),
-    ("FP16_320×960         thr=0.5", str(ENGINE_FP16_320), 0.50, 320,  960),
+    ("FP16_320×960(非等比)  thr=0.3", str(ENGINE_FP16_320),   0.30, 320,  960),
+    ("FP16_320×960(非等比)  thr=0.5", str(ENGINE_FP16_320),   0.50, 320,  960),
+    ("FP16_320×1060(等比)   thr=0.3", str(ENGINE_FP16_320AR), 0.30, 320, 1060),
+    ("FP16_320×1060(等比)   thr=0.5", str(ENGINE_FP16_320AR), 0.50, 320, 1060),
 ]
 
 def main():

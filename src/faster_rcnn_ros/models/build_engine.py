@@ -50,11 +50,14 @@ INPUT_W = _args.width
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 INPUT_ONNX   = os.path.join(SCRIPT_DIR, 'fasterrcnn_nuscenes.onnx')
 FIXED_ONNX   = os.path.join(SCRIPT_DIR, f'fasterrcnn_nuscenes_fixed_{INPUT_H}x{INPUT_W}.onnx')
-OUTPUT_ENGINE = os.path.join(SCRIPT_DIR, f'faster_rcnn_{INPUT_H}{_args.suffix}.engine')
+# 引擎命名：--suffix 为空时用 faster_rcnn_{H}.engine，否则用 faster_rcnn{suffix}.engine
+_suffix = _args.suffix
+_engine_stem = f'faster_rcnn{_suffix}' if _suffix else f'faster_rcnn_{INPUT_H}'
+OUTPUT_ENGINE = os.path.join(SCRIPT_DIR, f'{_engine_stem}.engine')
 # install 目录（相对 SCRIPT_DIR 推算ros2 workspace 根目录）
 # SCRIPT_DIR = .../ros2_ws/src/faster_rcnn_ros/models
 # install  = .../ros2_ws/install/faster_rcnn_ros/share/faster_rcnn_ros/models
-_WS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, '..', '..', '..', '..'))
+_WS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, '..', '..', '..'))
 INSTALL_DIR = os.path.join(_WS_DIR, 'install', 'faster_rcnn_ros', 'share',
                            'faster_rcnn_ros', 'models')
 TRTEXEC      = '/usr/src/tensorrt/bin/trtexec'

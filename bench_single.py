@@ -7,8 +7,9 @@
     fp16_500            FP16 500×1242
     int8_500            INT8(fallback) 500×1242
     fp16_700            FP16 700×1242
-    fp16_320            FP16 320×960   (低分辨率轻量)
+    fp16_320            FP16 320×960   (非等比缩放，宽高比失真9.4%)
     cublaslt_375        FP16+cuBLASLt 375×1242
+    fp16_320x1060       FP16 320×1060  (等比缩放，宽高比误差0.015%)
     all                 依次测试所有可用引擎并打印对比表
 """
 import sys, cv2, numpy as np, ctypes, glob, time, tensorrt as trt, os
@@ -21,8 +22,9 @@ ENGINES = {
     "int8_500":      ("faster_rcnn_500_int8.engine",       500, 1242, "INT8_500h(fallback)"),
     "fp16_700":      ("faster_rcnn_700.engine",            700, 1242, "FP16_700h"),
     # 新引擎：低分辨率 + cuBLASLt 对比
-    "fp16_320":      ("faster_rcnn_320.engine",            320,  960, "FP16_320×960"),
+    "fp16_320":      ("faster_rcnn_320.engine",            320,  960, "FP16_320×960(非等比)"),
     "cublaslt_375":  ("faster_rcnn_375_cublaslt.engine",   375, 1242, "FP16_375h+cuBLASLt"),
+    "fp16_320x1060": ("faster_rcnn_320x1060.engine",       320, 1060, "FP16_320×1060(等比)"),
 }
 
 key = sys.argv[1] if len(sys.argv) > 1 else "fp16_375"
