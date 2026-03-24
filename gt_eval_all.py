@@ -30,8 +30,11 @@ KITTI_LBLS  = WS / "test_images/kitti_100/labels"
 OUT_BASE    = WS / "test_images/compare_results"
 ROS_SETUP   = WS / "install/setup.bash"
 
-ENGINE_FP16 = MODELS_DIR / "faster_rcnn_500.engine"
-ENGINE_INT8 = MODELS_DIR / "faster_rcnn_500_int8.engine"
+ENGINE_FP16     = MODELS_DIR / "faster_rcnn_500.engine"
+ENGINE_INT8     = MODELS_DIR / "faster_rcnn_500_int8.engine"
+ENGINE_FP16_375 = MODELS_DIR / "faster_rcnn_375.engine"
+
+# NOTE: 375×1242 是训练时使用的尺寸，500×1242 需要模型对齐 padding
 
 # KITTI 图片原始尺寸（所有图尺寸一致）
 IMG_W, IMG_H = 1224, 370
@@ -103,20 +106,21 @@ def _d2h(arr, src):
 
 import tensorrt as trt
 
-INPUT_H, INPUT_W = 500, 1242
 MAX_DET = 2000   # 固定缓冲区最大检测数
 
 class Inferencer:
     """TRT 推理器：与 C++ 节点使用完全相同的预处理 (blobFromImage, scale=1/255, swapRB)"""
-    def __init__(self, engine_path):
+    def __init__(self, engine_path, input_h=500, input_w=1242):
+        self.INPUT_H = input_h
+        self.INPUT_W = input_w
         logger = trt.Logger(trt.Logger.ERROR)
         trt.init_libnvinfer_plugins(logger, "")
         self._eng = trt.Runtime(logger).deserialize_cuda_engine(
             open(engine_path, "rb").read())
         self._ctx = self._eng.create_execution_context()
-        self._ctx.set_input_shape("image", (1, 3, INPUT_H, INPUT_W))
+        self._ctx.set_input_shape("image", (1, 3, self.INPUT_H, self.INPUT_W))
         # 固定大小缓冲区，动态输出通过 get_tensor_shape 获取实际大小
-        self._dinp    = _malloc(3 * INPUT_H * INPUT_W * 4)
+        self._dinp    = _malloc(3 * self.INPUT_H * self.INPUT_W * 4)
         self._dscores = _malloc(MAX_DET * 4)
         self._dlabels = _malloc(MAX_DET * 4)
         self._dboxes  = _malloc(MAX_DET * 4 * 4)
@@ -127,7 +131,7 @@ class Inferencer:
 
     def infer_raw(self, bgr):
         """与 C++ blobFromImage 完全一致的预处理，返回 (scores, labels, boxes)"""
-        blob = cv2.dnn.blobFromImage(bgr, 1.0/255.0, (INPUT_W, INPUT_H),
+        blob = cv2.dnn.blobFromImage(bgr, 1.0/255.0, (self.INPUT_W, self.INPUT_H),
                                      swapRB=True, crop=False)
         blob = np.ascontiguousarray(blob)
         _h2d(self._dinp, blob)
@@ -147,13 +151,13 @@ class Inferencer:
         _free(self._dinp); _free(self._dscores); _free(self._dlabels); _free(self._dboxes)
 
 
-def run_inference_with_boxes(engine_path, threshold, images):
+def run_inference_with_boxes(engine_path, threshold, images, input_h=500, input_w=1242):
     """
     对每张图推理，返回:
       per_image: {stem: [(cls_id, x1,y1,x2,y2, score), ...]}
       latencies: [ms, ...]
     """
-    inf = Inferencer(engine_path)
+    inf = Inferencer(engine_path, input_h=input_h, input_w=input_w)
     # warmup
     dummy = cv2.imread(str(images[0]))
     for _ in range(5): inf.infer_raw(dummy)
@@ -165,7 +169,7 @@ def run_inference_with_boxes(engine_path, threshold, images):
         bgr = cv2.imread(str(img_path))
         if bgr is None: continue
         oh, ow = bgr.shape[:2]
-        sx, sy = ow / INPUT_W, oh / INPUT_H
+        sx, sy = ow / inf.INPUT_W, oh / inf.INPUT_H
 
         t0 = time.perf_counter()
         scores, labels, boxes = inf.infer_raw(bgr)
@@ -234,11 +238,15 @@ def match_gt(gt_list, pred_list, iou_thr=IOU_THR):
 
 
 # ─────────────────────── 主流程 ──────────────────────────────────────────────
+# (名称, 引擎路径, 置信度阈值, 输入高度, 输入宽度)
+# 训练尺寸: 375×1242  →  FP16_375h 是与训练对齐的配置
 CONFIGS = [
-    ("FP16 + thr=0.5",  str(ENGINE_FP16), 0.5),
-    ("FP16 + thr=0.25", str(ENGINE_FP16), 0.25),
-    ("INT8 + thr=0.5",  str(ENGINE_INT8), 0.5),
-    ("INT8 + thr=0.25", str(ENGINE_INT8), 0.25),
+    ("FP16_375h(训练尺寸) thr=0.3", str(ENGINE_FP16_375), 0.30, 375, 1242),
+    ("FP16_375h(训练尺寸) thr=0.5", str(ENGINE_FP16_375), 0.50, 375, 1242),
+    ("FP16_500h            thr=0.3", str(ENGINE_FP16),     0.30, 500, 1242),
+    ("FP16_500h            thr=0.5", str(ENGINE_FP16),     0.50, 500, 1242),
+    ("INT8_500h            thr=0.3", str(ENGINE_INT8),     0.30, 500, 1242),
+    ("INT8_500h            thr=0.5", str(ENGINE_INT8),     0.50, 500, 1242),
 ]
 
 def main():
@@ -255,18 +263,18 @@ def main():
 
     results = []
 
-    for cfg_name, engine_path, threshold in CONFIGS:
+    for cfg_name, engine_path, threshold, inp_h, inp_w in CONFIGS:
         if not Path(engine_path).exists():
             print(f"[SKIP] {cfg_name}: 引擎不存在")
             continue
         prec_tag = "fp16" if "FP16" in cfg_name else "int8"
-        thr_tag  = str(threshold).replace(".", "p")
+        thr_tag  = f"{inp_h}h_{str(threshold).replace('.', 'p')}"
         log_tag  = f"{prec_tag}_thr{thr_tag}"
 
         print(f"\n{'─'*60}")
         print(f"  ▶ {cfg_name}  [{Path(engine_path).name}]")
 
-        per_image, latencies = run_inference_with_boxes(engine_path, threshold, images)
+        per_image, latencies = run_inference_with_boxes(engine_path, threshold, images, inp_h, inp_w)
 
         # 汇总指标
         tot_gt = tot_pred = tot_hit = tot_miss = tot_fp = 0

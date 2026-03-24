@@ -187,7 +187,8 @@ def compute_topk_k_map(onnx_path, input_h, input_w):
                                 providers=['CPUExecutionProvider'])
     fake = np.zeros((1, 3, input_h, input_w), dtype=np.float32)
     out_names = [o.name for o in sess.get_outputs()]
-    results = sess.run(out_names[-5:], {"image": fake})
+    inp_name = sess.get_inputs()[0].name  # 兼容 "image" 和 "input_image"
+    results = sess.run(out_names[-5:], {inp_name: fake})
     k_map = {t: int(v.flat[0]) for t, v in zip(_TOPK_TENSOR_NAMES, results)}
     return k_map
 
@@ -422,6 +423,15 @@ def main():
 
     print('\n[7] Final topological sort …')
     topological_sort(graph)
+
+    # Rename input_image → image for TRT compatibility
+    for inp in graph.input:
+        if inp.name == 'input_image':
+            old_name = inp.name
+            inp.name = 'image'
+            for node in graph.node:
+                node.input[:] = ['image' if x == old_name else x for x in node.input]
+            print("  Renamed input 'input_image' → 'image'")
 
     print(f'\n[8] Saving fixed ONNX to {FIXED_ONNX} …')
     onnx.save(model, FIXED_ONNX)
