@@ -27,9 +27,20 @@ from onnx import numpy_helper, helper, TensorProto
 import argparse
 
 def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument('--height', type=int, default=375, help='Input height (default 375)')
-    p.add_argument('--width',  type=int, default=1242, help='Input width  (default 1242)')
+    p = argparse.ArgumentParser(
+        description='Fix fasterrcnn_nuscenes.onnx and build TensorRT FP16 engine.'
+    )
+    p.add_argument('--height',     type=int,   default=375,  help='Input height (default 375)')
+    p.add_argument('--width',      type=int,   default=1242, help='Input width  (default 1242)')
+    p.add_argument('--cublas-lt',  action='store_true',
+                   help='Enable cuBLASLt as extra tactic source '
+                        '(may improve FC/GEMM layers in RoI Head)')
+    p.add_argument('--topk-scale', type=float, default=1.0,
+                   help='Scale factor for RPN TopK K values '
+                        '(e.g. 0.5 halves proposals, may reduce RoI Head latency)')
+    p.add_argument('--suffix',     type=str,   default='',
+                   help='Optional suffix appended to engine filename '
+                        '(e.g. --suffix _cublaslt → faster_rcnn_375_cublaslt.engine)')
     return p.parse_args()
 
 _args = parse_args()
@@ -39,7 +50,10 @@ INPUT_W = _args.width
 SCRIPT_DIR   = os.path.dirname(os.path.abspath(__file__))
 INPUT_ONNX   = os.path.join(SCRIPT_DIR, 'fasterrcnn_nuscenes.onnx')
 FIXED_ONNX   = os.path.join(SCRIPT_DIR, f'fasterrcnn_nuscenes_fixed_{INPUT_H}x{INPUT_W}.onnx')
-OUTPUT_ENGINE = os.path.join(SCRIPT_DIR, f'faster_rcnn_{INPUT_H}.engine')
+OUTPUT_ENGINE = os.path.join(SCRIPT_DIR, f'faster_rcnn_{INPUT_H}{_args.suffix}.engine')
+INSTALL_DIR  = os.path.join(os.path.dirname(SCRIPT_DIR), '..', '..', '..',
+                             'install', 'faster_rcnn_ros', 'share',
+                             'faster_rcnn_ros', 'models')
 TRTEXEC      = '/usr/src/tensorrt/bin/trtexec'
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -403,8 +417,12 @@ def main():
     print(f'\n[4] Computing TopK K values for {INPUT_H}×{INPUT_W} via ORT …')
     global TOPK_K_MAP
     TOPK_K_MAP = compute_topk_k_map(INPUT_ONNX, INPUT_H, INPUT_W)
+    if _args.topk_scale != 1.0:
+        TOPK_K_MAP = {k: max(1, int(v * _args.topk_scale)) for k, v in TOPK_K_MAP.items()}
+        print(f'  [TopK scale={_args.topk_scale}] Scaled K values:')
     for t, v in TOPK_K_MAP.items():
         print(f'  {t.split("/")[-1]} = {v}')
+    print(f'  Total pre-NMS proposals (sum): {sum(TOPK_K_MAP.values())}')
 
     print('\n[4b] TopK K → static constants …')
     fold_topk_k_to_constants(graph)
@@ -455,8 +473,11 @@ def main():
         f'--maxShapes=image:1x3x{INPUT_H}x{INPUT_W}',
         '--workspace=4096',
     ]
+    if _args.cublas_lt:
+        cmd.append('--tacticSources=+CUBLAS_LT')
+        print('  [cuBLASLt] 已启用 cuBLASLt 作为 tactic source（对 RoI Head FC 层有潜在收益）')
     print(' ', ' '.join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
 
     tail = lambda s: s[-4000:] if len(s) > 4000 else s
     if result.stdout:
@@ -467,6 +488,15 @@ def main():
     if result.returncode == 0:
         size_mb = os.path.getsize(OUTPUT_ENGINE) / 1024 / 1024
         print(f'\n✅ SUCCESS! Engine: {OUTPUT_ENGINE} ({size_mb:.0f} MB)')
+        # 自动拷贝到 install/ 供 bench_single.py 和 ROS2 节点使用
+        install_dir = os.path.normpath(INSTALL_DIR)
+        if os.path.isdir(install_dir):
+            import shutil
+            dst = os.path.join(install_dir, os.path.basename(OUTPUT_ENGINE))
+            shutil.copy2(OUTPUT_ENGINE, dst)
+            print(f'  📦 已拷贝到: {dst}')
+        else:
+            print(f'  ⚠️  install 目录不存在，跳过拷贝: {install_dir}')
     else:
         print(f'\n❌ trtexec failed (returncode={result.returncode})')
         sys.exit(1)
