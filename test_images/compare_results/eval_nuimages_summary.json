@@ -1,0 +1,152 @@
+[
+  {
+    "config": "基线:  FP16_500h  thr=0.5",
+    "lat_mean_ms": 76.33972422871739,
+    "lat_p95_ms": 97.92381747392938,
+    "avg_dets_per_img": 2.028,
+    "total_per_class": {
+      "car": 636,
+      "truck": 5,
+      "bus": 0,
+      "trailer": 2,
+      "constr_veh": 0,
+      "pedestrian": 369,
+      "motorcycle": 2,
+      "bicycle": 0,
+      "traffic_cone": 0,
+      "barrier": 0
+    },
+    "avg_per_class": {
+      "car": 1.272,
+      "truck": 0.01,
+      "bus": 0.0,
+      "trailer": 0.004,
+      "constr_veh": 0.0,
+      "pedestrian": 0.738,
+      "motorcycle": 0.004,
+      "bicycle": 0.0,
+      "traffic_cone": 0.0,
+      "barrier": 0.0
+    }
+  },
+  {
+    "config": "方案1: 多尺度融合 (375h+500h) thr=0.5  [↑召回]",
+    "lat_mean_ms": 132.87774004554376,
+    "lat_p95_ms": 169.37732059741393,
+    "avg_dets_per_img": 2.006,
+    "total_per_class": {
+      "car": 652,
+      "truck": 5,
+      "bus": 0,
+      "trailer": 2,
+      "constr_veh": 0,
+      "pedestrian": 342,
+      "motorcycle": 2,
+      "bicycle": 0,
+      "traffic_cone": 0,
+      "barrier": 0
+    },
+    "avg_per_class": {
+      "car": 1.304,
+      "truck": 0.01,
+      "bus": 0.0,
+      "trailer": 0.004,
+      "constr_veh": 0.0,
+      "pedestrian": 0.684,
+      "motorcycle": 0.004,
+      "bicycle": 0.0,
+      "traffic_cone": 0.0,
+      "barrier": 0.0
+    }
+  },
+  {
+    "config": "方案2: INT8_500h  自适应阈值           [↑速度+召回]",
+    "lat_mean_ms": 62.513315501157194,
+    "lat_p95_ms": 70.39603195153175,
+    "avg_dets_per_img": 4.196,
+    "total_per_class": {
+      "car": 622,
+      "truck": 4,
+      "bus": 0,
+      "trailer": 1,
+      "constr_veh": 0,
+      "pedestrian": 1446,
+      "motorcycle": 12,
+      "bicycle": 13,
+      "traffic_cone": 0,
+      "barrier": 0
+    },
+    "avg_per_class": {
+      "car": 1.244,
+      "truck": 0.008,
+      "bus": 0.0,
+      "trailer": 0.002,
+      "constr_veh": 0.0,
+      "pedestrian": 2.892,
+      "motorcycle": 0.024,
+      "bicycle": 0.026,
+      "traffic_cone": 0.0,
+      "barrier": 0.0
+    }
+  },
+  {
+    "config": "方案3: FP16_375h  thr=0.5              [↑速度优先]",
+    "lat_mean_ms": 57.97338598454371,
+    "lat_p95_ms": 60.67790308734401,
+    "avg_dets_per_img": 1.168,
+    "total_per_class": {
+      "car": 446,
+      "truck": 2,
+      "bus": 0,
+      "trailer": 0,
+      "constr_veh": 0,
+      "pedestrian": 136,
+      "motorcycle": 0,
+      "bicycle": 0,
+      "traffic_cone": 0,
+      "barrier": 0
+    },
+    "avg_per_class": {
+      "car": 0.892,
+      "truck": 0.004,
+      "bus": 0.0,
+      "trailer": 0.0,
+      "constr_veh": 0.0,
+      "pedestrian": 0.272,
+      "motorcycle": 0.0,
+      "bicycle": 0.0,
+      "traffic_cone": 0.0,
+      "barrier": 0.0
+    }
+  },
+  {
+    "config": "附加:  FP16_700h  thr=0.5              [训练分辨率匹配]",
+    "lat_mean_ms": 67.26851298287511,
+    "lat_p95_ms": 70.9162411862053,
+    "avg_dets_per_img": 2.444,
+    "total_per_class": {
+      "car": 662,
+      "truck": 10,
+      "bus": 0,
+      "trailer": 5,
+      "constr_veh": 0,
+      "pedestrian": 540,
+      "motorcycle": 5,
+      "bicycle": 0,
+      "traffic_cone": 0,
+      "barrier": 0
+    },
+    "avg_per_class": {
+      "car": 1.324,
+      "truck": 0.02,
+      "bus": 0.0,
+      "trailer": 0.01,
+      "constr_veh": 0.0,
+      "pedestrian": 1.08,
+      "motorcycle": 0.01,
+      "bicycle": 0.0,
+      "traffic_cone": 0.0,
+      "barrier": 0.0
+    }
+  }
+]

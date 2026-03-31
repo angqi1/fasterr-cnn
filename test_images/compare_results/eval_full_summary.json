@@ -1,0 +1,182 @@
+[
+  {
+    "config": "FP16_375h  thr=0.3  [基准]",
+    "recall": 61.136712749615974,
+    "precision": 11.186059584035975,
+    "f1": 18.911855547636016,
+    "lat_mean": 63.44655460631475,
+    "lat_p95": 66.97965008206666,
+    "engine_mb": 83,
+    "per_class_recall": {
+      "car": 69.39571150097466,
+      "truck": 72.22222222222221,
+      "bus": 0.0,
+      "pedestrian": 40.845070422535215,
+      "bicycle": 0.0
+    },
+    "per_class_precision": {
+      "car": 14.82098251457119,
+      "truck": 650.0,
+      "bus": 0.0,
+      "pedestrian": 2.7884615384615388,
+      "bicycle": 0.0
+    },
+    "per_class_gt": {
+      "car": 513,
+      "truck": 18,
+      "bus": 19,
+      "pedestrian": 71,
+      "bicycle": 30
+    }
+  },
+  {
+    "config": "FP16_500h  thr=0.3  [基准]",
+    "recall": 64.82334869431644,
+    "precision": 10.088453263208223,
+    "f1": 17.459660736450143,
+    "lat_mean": 77.75996457552537,
+    "lat_p95": 81.35556558845565,
+    "engine_mb": 114,
+    "per_class_recall": {
+      "car": 74.6588693957115,
+      "truck": 50.0,
+      "bus": 0.0,
+      "pedestrian": 42.25352112676056,
+      "bicycle": 0.0
+    },
+    "per_class_precision": {
+      "car": 14.804793196752996,
+      "truck": 300.0,
+      "bus": 0.0,
+      "pedestrian": 2.130681818181818,
+      "bicycle": 0.0
+    },
+    "per_class_gt": {
+      "car": 513,
+      "truck": 18,
+      "bus": 19,
+      "pedestrian": 71,
+      "bicycle": 30
+    }
+  },
+  {
+    "config": "INT8_500h  thr=0.3  [基准]",
+    "recall": 66.51305683563749,
+    "precision": 9.581765877406506,
+    "f1": 16.750483558994194,
+    "lat_mean": 70.37097690580413,
+    "lat_p95": 73.42519691446796,
+    "engine_mb": 58,
+    "per_class_recall": {
+      "car": 75.82846003898635,
+      "truck": 50.0,
+      "bus": 0.0,
+      "pedestrian": 49.29577464788733,
+      "bicycle": 0.0
+    },
+    "per_class_precision": {
+      "car": 14.197080291970805,
+      "truck": 0.0,
+      "bus": 0.0,
+      "pedestrian": 2.1806853582554515,
+      "bicycle": 0.0
+    },
+    "per_class_gt": {
+      "car": 513,
+      "truck": 18,
+      "bus": 19,
+      "pedestrian": 71,
+      "bicycle": 30
+    }
+  },
+  {
+    "config": "FP16_700h  thr=0.3  [训练分辨率]",
+    "recall": 60.06144393241167,
+    "precision": 9.345124282982791,
+    "f1": 16.173733195449845,
+    "lat_mean": 74.31465987861156,
+    "lat_p95": 79.93456982076168,
+    "engine_mb": 83,
+    "per_class_recall": {
+      "car": 70.76023391812866,
+      "truck": 50.0,
+      "bus": 0.0,
+      "pedestrian": 26.76056338028169,
+      "bicycle": 0.0
+    },
+    "per_class_precision": {
+      "car": 14.919852034525277,
+      "truck": 450.0,
+      "bus": 0.0,
+      "pedestrian": 1.3094417643004823,
+      "bicycle": 0.0
+    },
+    "per_class_gt": {
+      "car": 513,
+      "truck": 18,
+      "bus": 19,
+      "pedestrian": 71,
+      "bicycle": 30
+    }
+  },
+  {
+    "config": "FP16_700h  thr=0.15 [低阈值]",
+    "recall": 75.57603686635944,
+    "precision": 3.256121773659828,
+    "f1": 6.243258676479919,
+    "lat_mean": 74.44376063905656,
+    "lat_p95": 80.88125470094383,
+    "engine_mb": 83,
+    "per_class_recall": {
+      "car": 86.15984405458089,
+      "truck": 66.66666666666666,
+      "bus": 0.0,
+      "pedestrian": 53.52112676056338,
+      "bicycle": 0.0
+    },
+    "per_class_precision": {
+      "car": 6.148282097649186,
+      "truck": 35.294117647058826,
+      "bus": 0.0,
+      "pedestrian": 0.6220330659682436,
+      "bicycle": 0.0
+    },
+    "per_class_gt": {
+      "car": 513,
+      "truck": 18,
+      "bus": 19,
+      "pedestrian": 71,
+      "bicycle": 30
+    }
+  },
+  {
+    "config": "INT8_500h  veh=0.3/ped=0.15 [按类别阈值]",
+    "recall": 69.27803379416282,
+    "precision": 5.0374176253769685,
+    "f1": 9.39192003331945,
+    "lat_mean": 69.54180339025334,
+    "lat_p95": 73.80201558116823,
+    "engine_mb": 58,
+    "per_class_recall": {
+      "car": 75.82846003898635,
+      "truck": 50.0,
+      "bus": 0.0,
+      "pedestrian": 74.64788732394366,
+      "bicycle": 0.0
+    },
+    "per_class_precision": {
+      "car": 14.197080291970805,
+      "truck": 0.0,
+      "bus": 0.0,
+      "pedestrian": 0.9455842997323818,
+      "bicycle": 0.0
+    },
+    "per_class_gt": {
+      "car": 513,
+      "truck": 18,
+      "bus": 19,
+      "pedestrian": 71,
+      "bicycle": 30
+    }
+  }
+]

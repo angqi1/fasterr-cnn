@@ -47,3 +47,22 @@ test_images/*.png
 test_images/*.jpg
 test_images/kitti_*/
 test_images/*.zip
+
+# SSLAD-2D 原始数据集（5.7GB，可从官网重新下载，见 DATASETS.md）
+test_images/SSLAD-2D/
+test_images/labeled_test.tar
+test_images/labeled_trainval.tar
+
+# SSLAD-300 测试子集（images 为 symlink，results 为生成结果）
+test_images/sslad_300/images/
+test_images/sslad_300/results_375/
+test_images/sslad_300/results_maxn/
+
+# nuImages / nuScenes 原始图片（可从官网重新下载，见 DATASETS.md）
+test_images/nuimages/
+test_images/nuimages_uniform/
+test_images/nuscenes/
+
+# 对比评估中间结果图片
+test_images/compare_results/nuimages_gt_vis/
+test_images/compare_results/nuimages_vis/

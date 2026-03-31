@@ -1,11 +1,11 @@
 <launch>
     <!-- 通用参数 -->
-    <!-- 使用 500×1242 单引擎方案：Recall=81.8%，延迟≈68ms（与375基准相当) -->
-    <arg name="engine_path"   default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn_500.engine"/>
+    <!-- 使用 375×1242 单引擎基准方案 -->
+    <arg name="engine_path"   default="$(find-pkg-share faster_rcnn_ros)/models/faster_rcnn_375.engine"/>
     <arg name="labels_path"   default="$(find-pkg-share faster_rcnn_ros)/models/labels.txt"/>
     <arg name="overlay_topic" default="/detectnet/overlay"/>
     <arg name="threshold"     default="0.5"/>   <!-- 车辆置信度阈值 -->
-    <arg name="input_height"  default="500"/>
+    <arg name="input_height"  default="375"/>
     <arg name="input_width"   default="1242"/>
 
     <!-- 多尺度第二引擎（留空="none" 则禁用多尺度）-->
